@@ -1,0 +1,106 @@
+#ServiceNow Request Function
+Function Get-ServiceNow
+    {
+        #Create user credentials
+        $SNUser = "<username>"
+        $SNPass = Get-Content '$env:USERPROFILE\Documents\Scripts\ServiceNow\Creds\SNC.txt' | ConvertTo-SecureString
+        $SNCreds = New-Object -TypeName System.Management.Automation.PSCredential -ArgumentList $SNUser,$SNPass
+
+        #URI and query parameters
+        $Uri = "https://subsite.service-now.com/api/now/table/change_request?sysparm_query=state=-1"
+        
+        #Create array for results from URI REST API
+        $Result = Invoke-RestMethod -Uri $Uri -Method Get -Credential $SNCreds
+        
+        #Get data from results array
+        $Result.result | ConvertTo-Json | ConvertFrom-Json
+    }
+
+#HTML Table Style
+$Style = "<Style>
+        Body
+            {
+                Font-Family: Arial;
+                Font-Size: 10pt;
+                Table Align: Center;
+            }
+        Table
+            {
+                Margin: 0px 0px 0px 4px;
+                Border: 1px solid rgb(0,0,0);
+                Table-Layout: Fixed;
+                Width:100%;
+                Font-Family: Arial;
+                Font-Size: 10pt;
+                Background-Color: rgb(0,0,0);
+            }
+        TR:Hover TD
+            {
+                Background-Color: rgb(79,146,233);
+                Color: rgb(255,255,255);
+            }
+        TR:Nth-Child(Odd)
+            {
+                Background-Color: rgb(231,231,231);
+            }
+        TR:Nth-Child(Even)
+            {
+                Background-Color: rgb(255,255,255);
+            }
+        TH
+            {
+                Text-Align: Center;
+                Color: rgb(0,0,0);
+                Padding: 1px 4px 1px 4px;
+                Background-Color: rgb(171,171,171)
+            }
+        TD
+            {
+                Vertical-Align: Center;
+                Text-Align: Center;
+                Padding: 1px 4px 1px 4px;
+            }
+        H1
+            {
+                Font-Family: Arial;
+                Font-Size: 15pt;
+                Text-Align: Center;
+                Margin-Top:15px;
+                Margin-Bottom:20px;
+            }
+</Style>"
+
+#Create Body
+$Body = @"
+<H1>Open Change Request Report $(Get-Date -Uformat %x)</H1>
+"@
+
+#Create BodyAdd Array
+$BodyAdd = @()
+
+#Get changes from ServiceNow
+$CHGS = Get-ServiceNow
+
+#Create array for each change request
+foreach($CHG in $CHGS)
+    {
+        $Arr = New-Object Object
+        $Arr | Add-Member NoteProperty 'Number' -Value $CHG.number
+        $Arr | Add-Member NoteProperty 'State' -Value $CHG.state
+        $Arr | Add-Member NoteProperty 'Start Date' -Value $CHG.start_date
+        $Arr | Add-Member NoteProperty 'End Date' -Value $CHG.end_date
+        $Arr | Add-Member NoteProperty 'Short Description' -Value $CHG.short_description
+        $Arr | Add-Member NoteProperty 'Created By' -Value $CHG.sys_created_by
+        $Arr | Add-Member NoteProperty 'Work Started On' -Value $CHG.work_start
+        $Arr | Add-Member NoteProperty 'Type' -Value $CHG.type
+        $Arr 
+        
+        #Add change request to BodyAdd array
+        $BodyAdd += $Arr
+    }
+     
+#Add BodyAdd array to Body array, fix header names, and sort by change request number
+$Body += $BodyAdd | Select 'Number',@{Name="State";Expression={$CHG.state -replace "-1","Implementing"}},'Start Date','End Date','Short Description','Created By','Work Started On','Type' | Sort-Object Number | ConvertTo-Html -Head $Style | Out-String
+
+#Convert the report to html format and save to file
+ConvertTo-Html -Body $Body -Head $Style | Out-File $env:USERPROFILE\Downloads\CHGReport$(Get-Date -format MMddyyHHmmss).html

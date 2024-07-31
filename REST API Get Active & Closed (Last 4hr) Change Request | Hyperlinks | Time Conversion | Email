@@ -1,0 +1,228 @@
+#HTML Table Style
+$Style = "<Style>
+        Body
+            {
+                Font-Family: Arial;
+                Font-Size: 10pt;
+                Table Align: Center;
+            }
+        Table
+            {
+                Margin: 0px 0px 0px 4px;
+                Border: 1px solid black;
+                Table-Layout: Fixed;
+                Width:100%;
+                Font-Family: Arial;
+                Font-Size: 10pt;
+            }
+        TR:Hover TD
+            {
+                Background-Color: rgb(79,146,233);
+                Color: rgb(255,255,255);
+            }
+        TR:Nth-Child(Odd)
+            {
+                Background-Color: rgb(231,231,231);
+            }
+        TR:Nth-Child(Even)
+            {
+                Background-Color: rgb(255,255,255);
+            }
+        TH
+            {
+                Text-Align: Center;
+                Color: rgb(0,0,0);
+                Padding: 1px 4px 1px 4px;
+                Background-Color: rgb(171,171,171)
+            }
+        TD
+            {
+                Vertical-Align: Center;
+                Text-Align: Center;
+                Border: 1px solid black;
+                Padding: 1px 4px 1px 4px;
+            }
+        H1
+            {
+                Font-Family: Arial;
+                Font-Size: 15pt;
+                Text-Align: Center;
+                Margin-Top:15px;
+                Margin-Bottom:20px;
+            }
+        H2
+            {
+                Font-Family: Arial;
+                Font-Size: 15pt;
+                Text-Align: Center;
+                Margin-Top:15px;
+                Margin-Bottom:20px;
+            }
+</Style>"
+
+#Create BodyAdd Array
+$CBodyAdd = @()
+
+#Create CLCBodyAdd Array
+$CLCBodyAdd = @()
+
+#Assign CST zone info to a variable
+$CST = [System.TimeZoneInfo]::FindSystemTimeZoneById("Eastern Standard Time")
+
+#Assign UTC time zone info to a variable
+$UTC = [System.TimeZoneInfo]::FindSystemTimeZoneById("UTC")
+
+#Get date & time right now
+$Day = ((Get-Date).ToString("yyyy-MM-dd"))
+$FHRA = ((Get-Date).AddHours(-4).ToString("HH"))
+$M = ((Get-Date).ToString("mm"))
+
+#Create user credentials
+$SNUser = "<username>"
+$SNPass = Get-Content $env:USERPROFILE\Documents\Scripts\ServiceNow\Creds\SNC.txt' | ConvertTo-SecureString
+$SNCreds = New-Object -TypeName System.Management.Automation.PSCredential -ArgumentList $SNUser,$SNPass
+
+#Change Request URL
+$CURL = "https://subsite.service-now.com/nav_to.do?uri=change_request.do?sys_id="
+
+#URI and query parameters for open change requests 
+$CUri = "https://subsite.service-now.com/api/now/table/change_request?sysparm_query=state=-1"
+
+#Create array for results from URI REST API
+$CResult = Invoke-RestMethod -Uri $CUri -Method Get -Credential $SNCreds
+
+#Get data from open change request results array
+$CHGS = $CResult.result | ConvertTo-Json | ConvertFrom-Json
+
+#URI and query perameters for closed change requests 
+$CLCUri = "https://subsite.service-now.com//api/now/table/change_request?sysparm_query=work_endBETWEENjavascript%3Ags.dateGenerate('$Day'%2C'$FHRA%3A$M%3A00')%40javascript%3Ags.endOfCurrentMinute()"
+
+#Create array for closed change request results from URI REST API
+$CLCResult = Invoke-RestMethod -Uri $CLCUri -Method Get -Credential $SNCreds
+
+#Get data from closed change request results array
+$CLCCHGS = $CLCResult.result | ConvertTo-Json | ConvertFrom-Json
+
+#Create array for each change request
+Foreach($CHG in $CHGS)
+    {
+        #URI and query perameters for user system IDs 
+        $CHGUTUri = "https://subsite.service-now.com/api/now/table/sys_user?sysparm_query=sys_id=$($CHG.assigned_to.value)"
+        
+        #Create array for system IDs results from URI REST API
+        $CHGUTResult = Invoke-RestMethod -Uri $CHGUTUri -Method Get -Credential $SNCreds
+
+        #Get data from system IDs results array
+        $CHGTUser = $CHGUTResult.result | ConvertTo-Json | ConvertFrom-Json
+        
+        #Convert CHG work start date UTC time to EST
+        $CHGWSTZC = ([System.TimeZoneInfo]::ConvertTime($CHG.work_start.ToString(),$UTC,$CST)).ToString('yyyy-MM-dd HH:mm:ss')
+
+        #Convert CHG start date UTC time to EST
+        $CHGSDTZC = ([System.TimeZoneInfo]::ConvertTime($CHG.start_date.ToString(),$UTC,$CST)).ToString('yyyy-MM-dd HH:mm:ss')
+
+        #Convert CHG end date UTC time to EST
+        $CHGEDTZC = ([System.TimeZoneInfo]::ConvertTime($CHG.end_date.ToString(),$UTC,$CST)).ToString('yyyy-MM-dd HH:mm:ss')
+                
+        $CArr = New-Object Object
+        $CArr | Add-Member NoteProperty 'Number' -Value $CHG.number
+        $CArr | Add-Member NoteProperty 'State' -Value $CHG.state
+        $CArr | Add-Member NoteProperty 'Planned Start Date' -Value $CHGSDTZC
+        $CArr | Add-Member NoteProperty 'Planned End Date' -Value $CHGEDTZC
+        $CArr | Add-Member NoteProperty 'Short Description' -Value $CHG.short_description
+        $CArr | Add-Member NoteProperty 'Assigned To' -Value $CHGTUser.name
+        $CArr | Add-Member NoteProperty 'Work Started On' -Value $CHGWSTZC
+        $CArr | Add-Member NoteProperty 'Type' -Value $CHG.type
+        $CArr | Add-Member NoteProperty 'System ID' -Value $CHG.sys_id
+        $CArr
+
+        #Add change request to BodyAdd array
+        $CBodyAdd += $CArr
+    }
+
+If($CBodyAdd)
+    {
+        #Create Body
+        $CBody = @"
+        <H1>Open Change Requests</H1>
+"@
+        #Add BodyAdd array to Body array, fix header names, and sort by change request number
+        $CBody += $CBodyAdd | Select @{Name="Number";Expression={"<a href='$($CURL)$($_.Number)' target=_blank rel=noopener noreferrer>$($_.Number)</a>"}},'Short Description','Assigned To','Work Started On',@{Name="State";Expression={$_.state -replace "-1","Implementing"}},@{Name='Type';Expression={$_.Type -replace "standard","Standard"` -replace "normal","Normal"` -replace "emergency","Emergency"}},'Planned Start Date','Planned End Date' | Sort-Object 'Work Started On' | ConvertTo-Html -Head $Style | Out-String
+    }
+
+Else
+    {
+        #Create Body
+        $CBody = @"
+        <H1>No Open Change Requests In Implementing State</H1>
+"@
+    }
+
+#Create array for each closed change request
+Foreach($CLCCHG in $CLCCHGS)
+    {
+        #URI and query perameters for user system IDs 
+        $CLCUTUri = "https://subsite.service-now.com/api/now/table/sys_user?sysparm_query=sys_id=$($CLCCHG.assigned_to.value)"
+        
+        #Create array for system IDs results from URI REST API
+        $CLCUTResult = Invoke-RestMethod -Uri $CLCUTUri -Method Get -Credential $SNCreds
+
+        #Get data from system IDs results array
+        $CLCTUser = $CLCUTResult.result | ConvertTo-Json | ConvertFrom-Json
+
+        #Convert CLC work end UTC time to EST
+        $CLCWETZC = ([System.TimeZoneInfo]::ConvertTime($CLCCHG.work_end.ToString(),$UTC,$CST)).ToString('yyyy-MM-dd HH:mm:ss')
+
+        #Convert CLC start date UTC time to EST
+        $CLCSDTZC = ([System.TimeZoneInfo]::ConvertTime($CLCCHG.start_date.ToString(),$UTC,$CST)).ToString('yyyy-MM-dd HH:mm:ss')
+
+        #Convert CLC end date UTC time to EST
+        $CLCEDTZC = ([System.TimeZoneInfo]::ConvertTime($CLCCHG.end_date.ToString(),$UTC,$CST)).ToString('yyyy-MM-dd HH:mm:ss')
+
+        $CLCArr = New-Object Object
+        $CLCArr | Add-Member NoteProperty 'Number' -Value $CLCCHG.number
+        $CLCArr | Add-Member NoteProperty 'State' -Value $CLCCHG.state
+        $CLCArr | Add-Member NoteProperty 'Planned Start Date' -Value $CLCSDTZC
+        $CLCArr | Add-Member NoteProperty 'Planned End Date' -Value $CLCEDTZC
+        $CLCArr | Add-Member NoteProperty 'Short Description' -Value $CLCCHG.short_description
+        $CLCArr | Add-Member NoteProperty 'Assigned To' -Value $CLCTUser.name
+        $CLCArr | Add-Member NoteProperty 'Closed On' -Value $CLCWETZC
+        $CLCArr | Add-Member NoteProperty 'Type' -Value $CLCCHG.type
+        $CLCArr | Add-Member NoteProperty 'System ID' -Value $CLCCHG.sys_id
+        $CLCArr 
+        
+        #Add change request to BodyAdd array
+        $CLCBodyAdd += $CLCArr
+    }
+
+If($CLCBodyAdd)
+    {
+        #Create CLCBody
+        $CLCBody = @"
+        <H2>Closed Change Requests</H2>
+"@
+
+        #Add CLCBodyAdd array to Body array, fix header names, and sort by change request number
+        $CLCBody += $CLCBodyAdd | Select @{Name='Number';Expression={"<a href='$($CURL)$($_.Number)' target=_blank rel=noopener noreferrer>$($_.Number)</a>"}},'Short Description','Assigned To','Closed On',@{Name="State";Expression={$_.state -replace "3","Closed"` -replace "4","Cancelled"}},@{Name='Type';Expression={$_.Type -replace "standard","Standard"` -replace "normal","Normal"` -replace "emergency","Emergency"}},'Planned Start Date','Planned End Date' | Sort-Object 'Closed On' -Descending | ConvertTo-Html -Head $Style | Out-String
+    }
+
+Else
+    {
+        #Create CLCBody
+        $CLCBody = @"
+        <H2>No Recently Closed Change Requests</H2>
+"@  
+    }
+
+#Mail Info
+$SMTPAddress = "smtp.foo.local" 
+$ToAddress = @("usergroup@foo.com") 
+$FromAddress = "serviceaccountemail@foo.com" 
+$Subject = "Change Requests $(get-date -Uformat %x)"
+
+#Use System.Web assembly to correct URLs in ConvertTo-Html
+Add-Type -AssemblyName System.Web
+$Body = [System.Web.HttpUtility]::HtmlDecode("$CBody $CLCBody")
+
+#Send Email 
+Send-MailMessage -SmtpServer $SMTPAddress -To $ToAddress -From $FromAddress -Subject $Subject -Body $Body -BodyAsHtml
